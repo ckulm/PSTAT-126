@@ -1,0 +1,176 @@
+---
+title: "PSTAT126 Project Step 2"
+author: "Carter Kulm, Ameya Deshpande, Bowie Chuang, Deanna Hu"
+date: "Spring 2024"
+output:
+  html_document: default
+  pdf_document: 
+    fig_crop: no
+---
+
+```{r setup, include=FALSE}
+# knit options
+knitr::opts_chunk$set(echo = F,
+                      results = 'markup',
+                      fig.width = 3.5,
+                      fig.height = 2.5,
+                      fig.align = 'center',
+                      message = F,
+                      warning = F)
+
+bfcolor <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{\\textbf{%s}}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'><b>%s</b></span>", color, x)
+  } else x
+}
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(ggfortify)
+library(broom)
+```
+
+```{r results = 'hide'}
+set.seed(10)
+billionaires <- read.csv("~/Desktop/PSTAT 126/Project/Billionaires Statistics Dataset.csv")
+billionaires <- billionaires %>%
+  select(finalWorth, age, gender, country, industries, cpi_country, gdp_country, gross_tertiary_education_enrollment,  gross_primary_education_enrollment_country, life_expectancy_country, tax_revenue_country_country, total_tax_rate_country, population_country) %>%
+  drop_na()
+
+billionaires <- billionaires[sample(nrow(billionaires), 500), ]
+billionaires <- rename(billionaires, 
+       tax_revenue_country = tax_revenue_country_country, 
+       tertiary_education_enrollment = gross_tertiary_education_enrollment,
+       primary_education_enrollment = gross_primary_education_enrollment_country)
+billionaires <- billionaires %>%
+  mutate(
+    gdp_country = gsub("\\$", "", gdp_country),
+    gdp_country = gsub("\\,", "", gdp_country),
+    gdp_country = as.numeric(gdp_country)
+  )
+```
+
+### Hypothesis
+
+$H_0: \beta_1 = 0$ vs. $H_1: \beta_1 \neq 0$
+
+Our null hypothesis is that there is no linear relationship between the explanatory variable (country CPI) and the response variable (country life expectancy) while our alternative hypothesis is that there does exist a linear relationship between the two. 
+
+### Assumptions for Linear Regression
+
+```{r fig.}
+fit <- lm(life_expectancy_country ~ cpi_country, data = billionaires)
+plot(x = billionaires$cpi_country, y = billionaires$life_expectancy_country, xlab= 'CPI', ylab = 'Life Expectancy')
+abline(lm(billionaires$life_expectancy_country ~ billionaires$cpi_country))
+```
+
+As observed in the above scatter plot of CPI as the x value and life expectancy as the response, there is a clear negative linear correlation. Variance about the regression line is consistent at first, but does change as the CPI gets larger. Since CPI and life expectancy do not have much do to with each other, we can also intuitively assume independence.
+
+```{r fig.width = 3, fig.height = 2, fig.cap = "Residuals vs. Fitted Values on left, Normal Q-Q Plot on right"}
+par(mfrow = c(1, 2))
+autoplot(fit, which = 1:2)
+```
+
+As shown in the Q-Q plot, the residuals are close to following a normal distribution. However, in the fitted vs residuals plot, the spread is not consistent and neither is the variance.
+
+### Confidence Interval for $\beta_1$ 
+$H_0: \beta_1 = 0$: There is no correlation between the two variables, $H_1: \beta_1 \neq 0$: There is a correlation between the two variables. We will be testing for significance in the $\beta_1$ (coefficient) at $\alpha = 0.05$. If the p-value is greater than 0.05, we fail to reject the null hypothesis. 
+
+```{r} 
+correlation <- cor(billionaires$life_expectancy_country, billionaires$cpi_country) 
+n <- nrow(billionaires) 
+t_stat <- correlation * sqrt(n - 2) / sqrt(1 - correlation^2) 
+regression <- lm(life_expectancy_country ~ cpi_country, data = billionaires) 
+#summary(regression) 
+confint(regression, "cpi_country") 
+``` 
+
+The estimate for cpi_country's coefficient is -0.105686. This means that for every one-unit increase in the Consumer Price Index (CPI), the life expectancy is estimated to decrease by approximately 0.1057 years. Also, the p-value of this estimate is very, very small (<2e-16), being far smaller than $\alpha=0.05$, therefore indicating significant correlation between the two variables as we reject our null hypothesis. Lastly, the true coefficient is most likely to fall within the range of -0.1094192 and -0.1019533 with 95% confidence.
+
+### Plot of Variables, CI for an Interesting Explanatory Value (in progress)
+
+```{r fig.width = 3, fig.height = 2}
+ggplot(
+  data = billionaires,
+  aes(
+    x = cpi_country,
+    y = life_expectancy_country
+  )
+) +
+  geom_point() +
+  theme_minimal() +
+  ggtitle("CPI vs. Life Expectancy") +
+  xlab("CPI") +
+  ylab("Life Expectancy")
+```
+
+In the case of country CPI and country life expectancy, CPI is seen as an explanatory variable for life expectancy, as it measures the state of a country's economy at a given point in time, thus explaining why people in the country live for a shorter/longer amount of time. 
+
+```{r warning = F}
+x_bar <- billionaires %>%
+  select(
+    -life_expectancy_country
+  ) %>%
+  summarize(
+    across(
+      everything(), 
+      mean
+  ))
+predict(fit, newdata = x_bar, interval = 'confidence', level = 0.95)
+```
+
+Thus with 95% confidence, the mean life expectancy for a billionaire included in our data set is estimated to be between 77.93398 and 78.38882 years. 
+
+```{r}
+x_turkey_complete <- billionaires[billionaires$country == "Turkey", ]
+x_turkey <- x_turkey_complete[1, ]
+predict(fit, newdata = x_turkey, interval = 'prediction', level = 0.95)
+```
+One specific value of the explanatory variable is at CPI = 234.44, which corresponds to Turkey. If we look only at Turkey and create a predictive confidence interval for its life expectancy, we find that with 95% confidence, Turkey's life expectancy is estimated to be between 61.93633 and 72.25281 years. This is an interesting value because Turkey's real life expectancy is 77.4 years, falling well above its predictive confidence interval. 
+
+### Assessing Fit, Discussing $R^2$ and Residual Plot
+
+```{r}
+res <- resid(fit)
+#summary(fit)
+paste("Multiple R-squared: ", summary(fit)$r.squared)
+paste("Adjusted R-squared: ", summary(fit)$adj.r.squared)
+```
+
+The $\ R^2$ value for the fitted model between the predictor variable of the country CPI and the response variable is around 0.577. When we take into account the number of predictor in our linear model and scale by the degrees of freedom, the adjusted $\ R^2$ value ended up being around 57.6, which isn't much of a difference due to the reason that this linear model only has one predictor. The $\ R^2$ value in this model end up telling us that only 55% of total variation in the response is explained by the model, with the other 45% becoming our noise. 
+
+```{r fig.width = 2.5, fig.height = 1.5}
+#df <- augment(fit)
+#ggplot(df, aes(x = .fitted, y = .resid)) + geom_point() + geom_abline()
+
+plot_data <- data.frame(Fitted = fitted(fit),   
+                       Residual = res) 
+  
+# plot predicted values and actual values 
+ggplot(plot_data, aes(x = Fitted, y = Residual)) + 
+                  geom_point() + geom_hline(yintercept = 0, color = "green")
+
+```
+
+Solely based on this Residual Plot against the Fitted value, looking at how dispersed the data points are, we can conclude that a linear isn't the best option because the data points are not randomly dispersed, but concentrated at a certain region on the graph where the fitted values are around 80. 
+Comparing with the graph above, we can say that there are linear model might not be the best as compare to a transformed linear model. 
+
+```{r fig.width = 3, fig.height = 2}
+autoplot(fit, which = 2) 
+```
+
+According to this qqplot, we can see that the data points does not follow along the dotted line, which tells us that the data that we gather doesn't follow a theoretical distribution, or the samples we collected are not normally distributed. It is also interesting to see that there are some outliers with points concentrated around the upper right of the qqplot. 
+
+```{r}
+new_fit <- lm(log(life_expectancy_country) ~ cpi_country, data = billionaires)
+paste("Multiple R-squared: ", summary(new_fit)$r.squared)
+paste("Adjusted R-squared: ", summary(new_fit)$adj.r.squared)
+```
+
+As seen above, the $R^2$ values do not change much when putting a log transformation onto the response variable (life expectancy). 
+
+### Conclusion
+Based on our results, we believe that there is a high correlation between CPI_country and life expectancy. We also believe that a first degree linear regression isn't the best model in our case because the data aren't as randomly dispersed as we thought; there are some outliers in the data that make it less randomly dispersed. 
+Our group was surprised at how transformations of the response variable such as log() or sqrt() did not do much to improve the fit of the model. We believe that in these cases, the minor improvements in correlation were not worth the harm that would be done to the potential for interpretation. 
