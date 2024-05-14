@@ -1,0 +1,167 @@
+---
+title: "PSTAT Project Step 1"
+author: "Carter Kulm, Ameya Deshpande, Bowie Chuang, Deanna Hu"
+date: "Spring 2024"
+output:
+  html_document: default
+  pdf_document: 
+    fig_crop: no
+---
+
+```{r setup, include=FALSE}
+# knit options
+knitr::opts_chunk$set(echo = F,
+                      results = 'markup',
+                      fig.width = 3.35,
+                      fig.height = 2.35,
+                      fig.align = 'center',
+                      message = F,
+                      warning = F)
+
+bfcolor <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{\\textbf{%s}}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'><b>%s</b></span>", color, x)
+  } else x
+}
+library(tidyverse)
+library(skimr)
+library(ggpubr)
+library(corrplot)
+```
+
+# Characteristics of the Dataset
+
+```{r results = 'hide'}
+set.seed(10)
+billionaires <- read.csv("~/Desktop/PSTAT 126/Project/Billionaires Statistics Dataset.csv")
+billionaires <- billionaires %>%
+  select(finalWorth, age, gender, country, industries, cpi_country, gdp_country, gross_tertiary_education_enrollment,  gross_primary_education_enrollment_country, life_expectancy_country, tax_revenue_country_country, total_tax_rate_country, population_country) %>%
+  drop_na()
+
+billionaires <- billionaires[sample(nrow(billionaires), 500), ]
+billionaires <- rename(billionaires, 
+       tax_revenue_country = tax_revenue_country_country, 
+       tertiary_education_enrollment = gross_tertiary_education_enrollment,
+       primary_education_enrollment = gross_primary_education_enrollment_country)
+billionaires <- billionaires %>%
+  mutate(
+    gdp_country = gsub("\\$", "", gdp_country),
+    gdp_country = gsub("\\,", "", gdp_country),
+    gdp_country = as.numeric(gdp_country)
+  )
+```
+
+The name of our dataset is the Billionaires Statistics dataset, which our group found on Kaggle. The dataset was compiled from various sources, including Forbes and other financial publications. 
+[Kaggle](https://www.kaggle.com/datasets/nelgiriyewithana/billionaires-statistics-dataset)
+
+This data describes the population of all 2638 billionaires in the world in 2023, giving information on the country that these billionaires live in, such as the country's gdp or primary school enrollment rate. 
+
+Our dataset consists of 13 variables total (3 categorical, 10 numeric) and 500 observations, all of which represent a unique billionaire in 2023. 
+
+Below is a table descirbing the variables in our dataset. 
+
+| **`Name`** | **`Type`** | **`Description`** |
+|-|-|-|
+| finalWorth | Numeric | Net worth (USD) of billionaire (in millions) as of 2023 |
+| age | Numeric | Age of billionaire as of 2023 |
+| gender | Categorical | Describes the gender of the billionaire |
+| country | Categorical | Country where the billionaire currently resides |
+| industries | Categorical | The industry/industries in which the billionaire has made their fortune |
+| cpi_country | Numeric | The consumer price index (CPI) of the billionaire's country. CPI measures change in consumer prices over time |
+| gdp_country | Numeric | The gross domestic product (GDP) of the billionaire's country. GDP measures the monetary value of finished goods and services in a country within a specific period of time |
+| tertiary_education_enrollment | Numeric | A ratio of students enrolled in tertiary (post-high school) education to the age group that corresponds to tertiary education |
+| primary_education_enrollment | Numeric | A ratio of students enrolled in primary education to the age group that corresponds to primary education |
+| life_expectancy_country | Numeric | The life expectancy of people in the country where the billionaire resides |
+| tax_revenue_country | Numeric | The highest federal income tax rate (bracket) of the country where the billionaire resides |
+| total_tax_rate_country | Numeric | The individual income tax rate of the country where the billionaire resides |
+| population_country | Numeric | The population of the country where the billionaire resides |
+
+\newpage
+
+# Summary Stats
+
+```{r}
+skim_tee(billionaires)
+```
+**finalWorth:** One variable with an interesting distribution is the finalWorth variable, which describes the net worth of each billionaire. The mean of this variable is 4.6 billion and its standard deviation is 8.9 billion, meaning that its standard deviation is almost double the size of its mean. This is notable because even at the level of billionaires, there is a large level of wealth inequality. \
+**age:** A variable with a bell-shaped distribution is age, which is relatively surprising. One would think that age would have a left-skewed shape to its distribution, as logically it takes time to build wealth. However, the shape of age's distribution suggests that there are a fair number of young billionaires, raising the question of whether or not they inhereted their wealth or built it themselves. \
+**gdp_country:** The distribution of the gdp for each billionaire's country has an odd shape to it where there are peaks at the lower and upper ends. Though it may look odd, this is explained by the number of billionaires who reside in China and the US, as the volume of billionaires from these two countries alone rival the rest of the world. 
+
+# Graphical Displays
+
+```{r fig.height = 3, fig.width = 4}
+hist(billionaires$age, main = paste("Ages of Billionaires"), c = 5, xlab = paste("Age"))
+```
+Here is a histogram of the ages of the members when the data was recorded. Although not normal, the data does portray a slightly "bell-curve" look, with the peak being at 55-60 years, and a second peak being around 70 years. This makes statistical sense, since it takes time and experience to accumulate such high amounts of wealth. The graph is also more skewed to the left, and more uniform to the right, which supports this idea even more. It seems like the average age of the members is around 70-80.
+
+```{r fig.height = 3, fig.width = 4}
+plot(x = billionaires$life_expectancy_country, y = billionaires$finalWorth, main = paste("Final Worth by Life Expectancy"), xlab = paste("Life Expectancy of Country of Residence"), ylab = paste("Final Net Worth"))
+```
+The scatter plot with life expectancy of the residing country as the independent variable and net worth as the response is shown above. The bulk of the data lies between 70 and 85 years, with the mean being around 78-81. This entails a correlation between a measure of development (life expectancy) of the home country of the member and their ability to become a billionaire. It seems that the more developed a country is, the more resources they will have for their residents to gain wealth, and hence, most of the billionaires are from countries with relatively high life-expectancies. There are a few outliers, one from a really undeveloped country, but these are just rare examples. 
+
+```{r, fig.height = 5, fig.width = 6}
+billionaires_num <- billionaires %>%
+  select_if(is.numeric)
+correlation_matrix <- cor(billionaires_num)
+corrplot(correlation_matrix, addCoef.col = 'black', number.cex = 0.7, method = "circle", tl.cex = 0.8, type = 'full')
+
+```
+Based on the Correlation Matrix, it seems like most of the quantitative variables that we see here are not correlated with one another, with a lot of them having correlation coefficients near 0.This might lead to less correlated results when we dive into linear regression model. However, there are also a few variables that are correlated with another, such as life expectancy in a country vs CPI(Consumer Price Index) in a country or gross tertiary education enrollment vs population in a country. Keep in mind that even though age and birth year are highly negative correlated, they should not be considered because they are dependent variables with each other. 
+
+```{r}
+ggplot(data = billionaires, aes(x = age, y = total_tax_rate_country, color = gender))+
+  geom_point(alpha = 0.7)+
+  geom_smooth(method = 'lm', se = F, color = 'black')+
+  labs(x = 'Age', y = 'Total Tax Rate (Country)', title = 'Correlation Plot Between Age and Total Tax Rate in a Country')
+```
+This is a scatter plot between age and total tax rate for each country. As shown above, the data points scattered across all ages, from around 25 years old to 80 years old, and the tax rate for each country seems to only have slight negative correlation between the two variables. One thing interesting that we find is that there is a significantly more number of men as compare to women. 
+
+```{r}
+ggplot(data = billionaires, aes(x = gender, y = finalWorth)) +
+  geom_boxplot() + 
+  labs(x = 'Gender', y = 'Final Worth', title = 'Boxplot of Final Worth For Each Gender') +
+  ylim(0, 10000)
+```
+
+This boxplot include shows the final worth distribution for each gender. As we can see, most billionaires have a final worth of around 2.5 billion, with some outliers that have over 10 billions of final worth. We also notice that females final worth have a slightly higher median and 75th percentile as compare to men. 
+
+```{r}
+billionaires %>%
+  ggplot(
+    aes(
+      x = log(population_country),
+      y = tertiary_education_enrollment
+    )
+  ) +
+  geom_point() +
+  ggtitle("log(pop) vs. Tertiary Education Enrollment") +
+  theme(plot.title = element_text(size = 9))
+```
+Applying log() (primarily to account for the populations of China and India) to the populations of each billionaire's country yields an interesting visualization of how the enrollment rate in tertiary education decreases as the population of that country increases. One factor that could explain this strong association is that countries with large populations lack the educational infrastructure to send proportionally large populations of students to tertiary schools. 
+
+```{r}
+billionaires %>%
+  ggplot(
+    aes(
+      x = life_expectancy_country,
+      y = cpi_country
+    )
+  ) +
+  geom_point() +
+  ggtitle("Life expectancy vs. CPI")
+```
+This negative association between the life expectancy and consumer price index (CPI) of a country is the strongest seen in our dataset, and can be explained quite easily. CPI is generally an indicator of inflation, so countries with lower CPI are countries with a relatively stable economy. Thus with a stable economy comes more stability in medicine and other factors that increase life expectancy. 
+
+# Takeaways
+
+It has been surprising to see such little correlation between many of the variables, specifically in the way of the finalWorth variable. Our group found that there was not one variable in the dataset with even a slight correlation to the finalWorth (net worth) of the billionaires. One would think that taking such a specific subset of the population (billionaires) would yield a dataset with a high correlation between many of the variables. However, it is important to note that most of the Billionaires dataset is providing information on the country of residence of these billionaires rather than the billionaires themselves. 
+Our group sampled 500 of the original 2638 billionaires in the dataset, which we believe to be a number large enough to be representative of the larger population. 
+
+\newpage
+
+## Code appendix
+
+```{r appendix, ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+```
