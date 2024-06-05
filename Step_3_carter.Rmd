@@ -1,0 +1,487 @@
+---
+title: "PSTAT 126 Project Step 3"
+author: "Carter Kulm, Ameya Deshpande, Bowie Chuang, Deanna Hu"
+date: "Spring 2024"
+output:
+  html_document: default
+  pdf_document: 
+    fig_crop: no
+---
+
+
+```{r setup, include=FALSE}
+# knit options
+knitr::opts_chunk$set(echo = F,
+                      results = 'markup',
+                      fig.width = 3.5,
+                      fig.height = 2.5,
+                      fig.align = 'center',
+                      message = F,
+                      warning = F)
+
+bfcolor <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{\\textbf{%s}}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'><b>%s</b></span>", color, x)
+  } else x
+}
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(ggfortify)
+library(broom)
+library(GGally)
+library(modelr)
+library(ggpubr)
+library(leaps)
+library(MASS)
+```
+
+```{r results = 'hide'}
+set.seed(10)
+billionaires <- read.csv("~/Desktop/PSTAT 126/Project/Billionaires Statistics Dataset.csv")
+billionaires <- billionaires %>%
+  dplyr::select(finalWorth, age, cpi_country, gdp_country, gross_tertiary_education_enrollment, gross_primary_education_enrollment_country, life_expectancy_country, tax_revenue_country_country, population_country, total_tax_rate_country, gender) %>%
+  drop_na()
+
+billionaires <- billionaires[sample(nrow(billionaires), 500), ]
+billionaires <- rename(billionaires, 
+       tax_revenue_country = tax_revenue_country_country, 
+       tertiary_enrollment = gross_tertiary_education_enrollment, 
+       primary_enrollment = gross_primary_education_enrollment_country,
+       tax_rate_country = total_tax_rate_country)
+billionaires <- billionaires %>%
+  mutate(
+    gdp_country = gsub("\\$", "", gdp_country),
+    gdp_country = gsub("\\,", "", gdp_country),
+    gdp_country = as.numeric(gdp_country)
+  )
+billionaires_partition <- billionaires %>% resample_partition(p = c(train = 0.701, test = 0.299))
+```
+
+
+### Introduction
+
+The name of the data set that our group is using is the Billionaires Statistics data set, which we found on [Kaggle](https://www.kaggle.com/datasets/nelgiriyewithana/billionaires-statistics-dataset). The data was compiled from various sources, including Forbes and other financial publications, and primarily gives us information about the countries in which every billionaire in the world resides. 
+The population of interest to us are the countries in the world where the billionaires reside. We took a subset of 500 of these billionaires to form our data set, and the primary numeric variables of interest are shown below:
+
+| **`Name`** | **`Description`** |
+| - | - |
+| finalWorth | Net worth (USD) of billionaire (in millions) as of 2023 |
+| age | Age of billionaire as of 2023 |
+| cpi_country | The consumer price index (CPI) of the billionaire's country |
+| gdp_country | he gross domestic product (GDP) of the billionaire's country. |
+| tertiary_enrollment | Percent of eligible students enrolled in  (post-high school) education |
+| primary_enrollment | Percent of eligible students enrolled in primary education |
+| life_expectancy_country | Life expectancy of people in billionaire's country |
+| tax_revenue_country | Federal income tax rate (bracket) of billionaire's country |
+| tax_rate_country | Income tax rate for billionaire's country |
+| population_country | The population of billionaire's country |
+| gender | The gender of the billionaire |
+
+For the purposes of our models, life_expectancy_country will serve as the response variable. 
+
+
+### ggpairs()
+
+```{r fig.height = 20, fig.width = 20, message = F, include = F}
+ggpairs(data.frame(billionaires_partition$train))
+```
+
+Looking at the output of ggpairs() on our training data, we see that the strongest pearson correlation value between explanatory variables is between tax_rate_country and population_country, but this correlation is neither strong nor interesting. A more interesting correlation can be seen between gdp_country and tax_revenue_country, where there is a pearson correlation value of -0.604. This is notable because it shows as the gdp of a country in the training data increases, the amount of money that it collects in taxes goes down, which is a counterintuitive phenomenon. 
+
+There are a number of variables whose relationship to life expectancy could be strengthened by applying a transformation, which we will look at in the next section, feature engineering. 
+
+
+### Feature Engineering
+
+Here, we examine the strongest correlations to life expectancy (cpi_country, tertiary_enrollment, population): 
+
+```{r fig.width = 10}
+cpi1 <- data.frame(billionaires_partition$train) %>%
+  ggplot(
+    aes(
+      x = cpi_country,
+      y = life_expectancy_country
+    )
+  ) +
+  geom_point() +
+  ggtitle("cpi")
+tertiary1 <- data.frame(billionaires_partition$train) %>%
+  ggplot(
+    aes(
+      x = tertiary_enrollment,
+      y = life_expectancy_country
+    )
+  ) +
+  geom_point() +
+  ggtitle("tertiary enrollment")
+pop1 <- data.frame(billionaires_partition$train) %>%
+  ggplot(
+    aes(
+      x = population_country,
+      y = life_expectancy_country
+    )
+  ) +
+  geom_point() +
+  ggtitle("population")
+ggarrange(cpi1, tertiary1, pop1, nrow = 1, align = "h")
+```
+
+Based on all three plots, we see that applying a log transformation to the explanatory variables will produce a stronger association with life expectancy. Below, we examine the effects of a log transformation on the pearson correlation coefficients between the predictors and response variable. 
+
+```{r}
+options(width = 100)
+cpi_r <- c(
+  cor(data.frame(billionaires_partition$train)$cpi_country,
+      data.frame(billionaires_partition$train)$life_expectancy_country),
+  cor(log(data.frame(billionaires_partition$train)$cpi_country),
+      data.frame(billionaires_partition$train)$life_expectancy_country))
+tertiary_r <- c(
+  cor(data.frame(billionaires_partition$train)$tertiary_enrollment,
+      data.frame(billionaires_partition$train)$life_expectancy_country),
+  cor(log(data.frame(billionaires_partition$train)$tertiary_enrollment), 
+      data.frame(billionaires_partition$train)$life_expectancy_country))
+pop_r <- c(
+  cor(data.frame(billionaires_partition$train)$population_country,
+    data.frame(billionaires_partition$train)$life_expectancy_country),
+  cor(log(data.frame(billionaires_partition$train)$population_country),
+    data.frame(billionaires_partition$train)$life_expectancy_country))
+paste(c("cpi: ", "log(cpi): "), cpi_r)
+paste(c("tertiary_enrollment: ", "log(tertiary_enrollment): "), tertiary_r)
+paste(c("population: ", "log(population): "), pop_r)
+```
+
+Above, we see the increases in pearson correlation coefficient (r) values between the untransformed variables' associations with life expectancy (left) and the variables with log transformation's associations with life expectancy (right). 
+
+
+### Interaction Variables
+
+Due to the logical relationship between the population and tax revenue of a country, we believe that it would make sense to add an interaction variable that shows how much taxes one person pays, ie: (tax revenue / population). Thus in addition to simply how much taxes a country collects on the whole or the income tax rate, we have how much the average person is taxed. 
+
+
+### Computational Model
+
+**Model 1 (reduced)**: A model with only the strongest 3 predictors, all transformed. 
+$$\text{life_expectancy}_i = \beta_0 + \beta_1\text{log(cpi)}_i + \beta_2\text{log(tertiary_enrollment)}_i + \beta_3\text{log(population)}_i$$
+
+```{r results = 'hide'}
+options(width = 100)
+fit1 <- lm(life_expectancy_country ~ 
+             log(cpi_country) + 
+             log(tertiary_enrollment) +
+             log(population_country), 
+           data = data.frame(billionaires_partition$train))
+fit1 %>% summary()
+```
+
+**Model 2 (full)**: A model with the three strongest predictors transformed in addition to the other numeric variables used as predictors, and the additional interaction variable. 
+$$\text{life_expectancy}_i = \beta_0 + \beta_1\text{log(cpi)}_i + \beta_2\text{log(tertiary_enrollment)}_i + \beta_3\text{log(population)}_i
++ \beta_4\text{age}_i + \beta_5\text{tax_revenue}_i \\ + \beta_6\text{gdp}_i + \beta_7\text{primary_enrollment}_i + \beta_8\text{tax_rate}_i + \beta_9\text{finalWorth}_i + \beta_{10}\text{(tax_revenue / population)}_i$$
+
+```{r results = 'hide'}
+options(width = 100)
+fit2 <- lm(life_expectancy_country ~ 
+             log(cpi_country) + 
+             log(tertiary_enrollment) +
+             log(population_country) + 
+             age +
+             tax_revenue_country + 
+             gdp_country + 
+             primary_enrollment +
+             tax_rate_country +
+             finalWorth +
+             (tax_revenue_country / population_country),
+           data = data.frame(billionaires_partition$train))
+fit2 %>% summary()
+```
+
+**Differences between the models**
+
+Looking at the differences in  adjusted $R^2$ values between models 1 and 2, we see that model 2 appears to be a better fit for the training data. Below we run an ANOVA test for comparing nested models such that $H_0: \beta_4 = ... = \beta_{10} = 0$: 
+
+```{r}
+test1 <- anova(fit1, fit2, test = 'F')
+test1$`Pr(>F)`
+```
+
+And, based on the p-value of the ANOVA test, we reject the null hypothesis that the reduced model (model 1) is more significant (better model), in favor of model 2, which is the full model
+
+### Statistical Model
+
+Our group will use forward selection to select the variables to be used in the model. The dataset that we use contain nine numerical variables along with one categorical variables.
+
+```{r}
+options(width = 100)
+output <- regsubsets(
+  life_expectancy_country ~ .,
+  data = billionaires_partition$train,
+  method = "forward",
+  nbest = 1,
+  nvmax = 10)
+summary_output <- output %>% summary()
+summary_output$outmat
+```
+
+Through regsubsets() we see which variables should be included in the model at different numbers of predictors. 
+
+```{r results = 'hide'}
+tidy_leaps <- function(leaps_out){
+  # tibble of candidate models
+  summary(leaps_out)$which %>% 
+    as_tibble() %>%
+    # add p, n, and model id
+    mutate(p = rowSums(across(everything())) - 1,
+           n = leaps_out$nn,
+           model_id = row_number()) %>%
+    # compress model terms into list-column
+    nest(model_terms = -c('model_id', 'p', 'n')) %>%
+    # add bic, adjusted r2, and aic
+    bind_cols(bic = summary(leaps_out)$bic,
+              adjrsq = summary(leaps_out)$adjr2) %>%
+    mutate(aic = bic - p*log(n) + 2*p)
+}
+tidy_leaps(output)
+```
+
+**Justifications**
+
+```{r}
+aicdata <- tidy_leaps(output)[, c("p" ,"aic")]
+aicdf <- as.data.frame(aicdata)
+aicdf$aic <- suppressWarnings(as.numeric(as.character(aicdf$aic)))
+```
+
+```{r fig.width = 8}
+adjr2_plot <- ggplot(data = data.frame(summary_output$adjr2), aes(x = 1:10, y = summary_output$adjr2)) +
+  geom_point(colour = "red", size = 1.5) +
+  geom_label(aes(label= round(summary_output$adjr2, 3)), size = 1.5, nudge_y = 0.01 ) +
+  scale_x_continuous(breaks = seq(1,10,1)) +
+  labs(x = "Number of predictors", y = " adjusted R^2") +
+  theme(plot.caption = element_text(size = 6))
+rss_plot <- ggplot(data = data.frame(summary_output$rss), aes(x = 1:10, y = summary_output$rss)) +
+  geom_point(colour = "red", size = 1.5) +
+  geom_label(aes(label= round(summary_output$rss, 3)), size = 1.5, nudge_y = 0.01 ) +
+  scale_x_continuous(breaks = seq(1,10,1)) +
+  labs(x = "Number of predictors", y = "RSS") +
+  theme(plot.caption = element_text(size = 6))
+bic_plot <- ggplot(data = data.frame(summary_output$bic), aes(x = 1:10, y = summary_output$bic)) +
+  geom_point(colour = "green", size = 1.5) +
+  geom_label(aes(label= round(summary_output$bic, 3)), size = 1.5, nudge_y = 0.01 ) +
+  scale_x_continuous(breaks = seq(1,10,1)) +
+  labs(x = "Number of predictors", y = " BIC") +
+  theme(plot.caption = element_text(size = 6))
+aic_plot <- ggplot(data = aicdf, aes(x = 1:10, y = aic)) +
+  geom_point(colour = "green", size = 1.5) +
+  geom_label(aes(label= round(aicdf$aic, 3)), size = 1.5, nudge_y = 0.01 ) +
+  scale_x_continuous(breaks = seq(1,10,1)) +
+  labs(x = "Number of predictors", y = " AIC") +
+  theme(plot.caption = element_text(size = 6))
+ggarrange(adjr2_plot, rss_plot, bic_plot, aic_plot, nrow = 2, ncol = 2, align = "h")
+```
+
+We see that with more predictors in our model, the adjusted $R^2$ continuously increases and RSS continuously decreases until around the 7th predictor mark. Furthermore, while the BIC is at its lowest at 6 predictors, AIC is at its lowest at 7. Thus we sacrifice some selection consistency for predictive accuracy. 
+
+All of the above information encourages us to use a model with the first through seventh predictors. And from previous knowledge we know that taking the log of both cpi and population will improve the fit by a wide margin. 
+
+```{r}
+options(width = 100)
+fit3 <- lm(life_expectancy_country ~ 
+             log(cpi_country) +
+             log(population_country) +
+             tax_revenue_country + 
+             gdp_country + 
+             primary_enrollment +
+             tax_rate_country +
+             finalWorth,
+           data = data.frame(billionaires_partition$train))
+fit3_summ <- summary(fit3)
+paste("adjusted R^2: ", fit3_summ$adj.r.squared)
+paste("F statistic: ", fit3_summ$fstatistic[1])
+```
+
+Based on the adjusted $R^2$, we see that the fit is relatively strong. And, the F statistic strongly suggests that the model is extremely significant. 
+
+```{r include = F}
+resid_data <- data.frame(fitted = fitted(fit3), 
+                         residual = resid(fit3)) 
+ggplot(resid_data, 
+       aes(x = fitted, y = residual)) +
+  geom_point() + 
+  geom_hline(yintercept = 0)
+```
+
+Looking at the residuals of the fit, there is possibly slight heteroskdasticity near the larger fitted values and one large residual, but nothing that suggests the model should be adjusted with. 
+
+
+### Single Model
+
+We settle on the model: $$\text{life_expectancy}_i = \beta_0 + \beta_1\text{log(cpi)}_i + \beta_2\text{log(population)}_i +\beta_3\text{tax_revenue}_i \\ + \beta_4\text{gdp}_i + \beta_5\text{primary_enrollment}_i + \beta_6\text{tax_rate}_i + \beta_7\text{finalWorth}_i$$
+
+
+### Interpretation of Coefficients
+
+```{r results = 'hide'}
+fit3_summ
+```
+
+$\beta_0$ = 173 = Life expectancy is approximately 173 years when all predictor values are at reference value, and acts as the baseline for changes induced in other variables.
+
+$\beta_1$ = -12.82 = For a 1 unit increase in log(CPI), life expectancy decreases by approximately 12.82 years if all other variables are constant.
+
+$\beta_2$ = -1.27 = For a 1 unit increase in log(population) for a country, the life expectancy decreases by approximately 1.27 years if all other variables are constant.
+
+$\beta_3$ = 0.068 = For a 1 unit increase in tax revenue of a country, the life expectancy increases by approximately 0.068 years given all other variables are constant
+
+$\beta_4$ = $4.407\times10^{-14}$ = For a 1 unit increase in GDP, life expectancy increases by $4.407\times10^{-14}$ years considering all other variables stay the same.
+
+$\beta_5$ = -0.120 = For a 1 unit increase in primary education enrollment, life expectancy decreases by 0.120 years considering all other variables stay the same
+
+$\beta_6$ = 0.059 = For a 1 unit increase in tax rate, life expectancy increases by 0.059 years considering all other variables stay the same
+
+$\beta_7$ = $-1.409\times10^{-5}$ = For a 1 unit increase in net worth, life expectancy decreases by $1.409\times10^{-5}$ years considering all other variables stay the same
+
+After testing the coefficients at a significance level of 0.05, all coefficients of the chosen model are significant apart from finalWorth. 
+
+
+### $R^2$, Adjusted $R^2$ on Test Data
+
+```{r}
+predictions <- predict(fit3, newdata = billionaires_partition$test)
+# Calculate residuals
+residuals <- billionaires_partition$test$data$life_expectancy_country - predictions
+
+# Calculate SS_res and SS_tot
+SS_res <- sum(residuals^2)
+SS_tot <- sum((billionaires_partition$test$data$life_expectancy_country - mean(billionaires_partition$test$data$life_expectancy_country))^2)
+
+# Calculate R^2
+R2_test <- 1 - (SS_res / SS_tot)
+
+# Calculate adjusted R^2
+n <- nrow(billionaires_partition$test)
+p <- length(coef(fit3)) - 1  # number of predictors
+Adjusted_R2_test <- 1 - ((1 - R2_test) * (n - 1) / (n - p - 1))
+```
+
+Test data: $R^2 = 0.8512338$, Adjusted $R^2 = 0.8481915$
+
+The $R^2$ value represents proportion of the life expectancy variable (dependent) is explained by the predictors, so a value of 0.8512338 states that 85.12% of variability is explained by the model. The adjusted $R^2$ accounts for number of predictors relative to the number of observations. However, it should be noted that it is not a guarantee of an accurate description of the population, since it does not measure nonlinearity. 
+
+
+### Analysis of Residuals and Influence Points
+
+```{r}
+resid_data <- data.frame(fitted = fitted(fit3), 
+                         residual = resid(fit3)) 
+ggplot(resid_data, 
+       aes(x = fitted, y = residual)) +
+  geom_point() + 
+  geom_hline(yintercept = 0)
+```
+
+We can see that Nigeria is an extreme outlier based on its predictor values. While most countries with lower life expectancies worldwide would not be featured on a list of billionaires in the world, Nigeria has very high wealth inequality, leading to it being on the list despite its low life expectancy. If we take Nigeria out of the data set, a hypothetical 
+
+```{r}
+fit_test_out <- lm(life_expectancy_country ~ 
+             log(cpi_country) +
+             log(population_country) +
+             tax_revenue_country + 
+             gdp_country + 
+             primary_enrollment +
+             tax_rate_country +
+             finalWorth,
+           data = data.frame(billionaires_partition$train), 
+           subset = -45)
+fit_test_out_summ <- summary(fit_test_out)
+paste("adjusted R^2: ", fit_test_out_summ$adj.r.squared)
+paste("F statistic: ", fit_test_out_summ$fstatistic[1])
+```
+
+Comparing a model without Nigeria in the dataset gives us about a 3% increase in adjusted $R^2$ and a large increase in F statistic value. Thus, removing the point does improve the fit of our model by quite a bit. 
+
+
+### Interpretation of the Model
+
+Out of the 3 predictor variables that we dropped from our model, it is notable that two of them (age, gender) were descriptors specifically of the billionaire rather than the country that they lived in. This is because we are regressing onto the life expectancy of the billionaires' countries, not individual billionaires themselves, so predictors describing attributes of countries as a whole were more likely to be included in the selection. 
+
+```{r include = F}
+round(cor(data.frame(billionaires[, -c(7, 11)])), 2)
+```
+
+The strongest correlation between explanatory variables is seen with gdp and tax revenue at -0.60. The strength of the correlation is relatively notable, but the its negative nature suggests that there is something counterintuitive at hand, and the variables would not be good substitutes for each other. 
+
+
+### CI's, PI's Using Training Data
+
+**Confidence Interval**:
+
+```{r}
+x_bar <- data.frame(billionaires_partition$train) %>%
+  dplyr::select(
+    -c(life_expectancy_country, age, gender, tertiary_enrollment)
+  ) %>%
+  summarize(
+    across(
+      everything(), 
+      mean
+  ))
+x_bar
+ci <- predict(fit3, 
+                   newdata = x_bar,
+                   interval = "confidence", level = 0.95)
+mean_age <- ci[1]
+ci_lower_limit <- ci[2]
+ci_upper_limit <- ci[3]
+
+paste('Predicted Mean value: ', mean_age, 
+      ',CI Lower Bound: ', ci_lower_limit, 
+      ',CI Upper Bound: ',ci_upper_limit)
+```
+
+Our group decided to use all 7 variables in the model to predict a confidence interval for the mean life expectancy, which is given above. So with 95% confidence, we see that the mean life expectancy of a billionaire in our model is estimated to be between 76.81321 and 77.11099 years. 
+
+**Prediction Interval**:
+
+```{r}
+set.seed(1)
+x_vals_complete <- sample_n(data.frame(billionaires_partition$train), 1)
+x_vals <- x_vals_complete %>%
+  dplyr::select(
+    -c(life_expectancy_country, age, gender, tertiary_enrollment)
+  )
+x_vals
+```
+
+We can see the values of each variable for an individual drawn from the training data above. 
+
+```{r}
+pi <- predict(fit3, 
+              newdata = x_vals, 
+              interval = "prediction", 
+              level = 0.95)
+
+predicted_age <- pi[1]
+pi_lower_limit <- pi[2]
+pi_upper_limit <- pi[3]
+
+paste('Predicted value: ', predicted_age, 
+      ',PI Lower Bound: ', pi_lower_limit, 
+      ',PI Upper Bound: ',pi_upper_limit)
+```
+
+Again using all 7 variables from our chosen model, above we can see that with 95% confidence, a billionaire with the attributes listed previously is estimated to have a life expectancy between 75.25152 and 81.66886 years. 
+
+### Summary
+
+In the first section of our report, our group settled on a nested model and a full model that both fit the training data relatively well. These models both utilized log transformations of explanatory variables that strengthened their association with the response variable, life expectancy. In one of the models we also utilized an interaction variable, (tax revenue / population), which represented how much an average person in a billionaire's country was taxed. In the end, the full model was determined to fit the training data better than the nested model. 
+
+In the second section of our report, we used forward selection with our original set of 10 variables to narrow a model down to 7 predictors, 2 of them being transformed, based on a number of criteria such as adjusted $R^2$, F statistic, and residuals. The model was then tested on 150 test data observations, where it maintained a similar level of accuracy. One large outlier, Nigeria, was found to affect the model's fit, so when taken out the model's fit is more accurate by a large amount. 
+
+### Code appendix
+
+Included in Rmd file. 
+
+```{r appendix, ref.label=knitr::all_labels(), echo = F, eval=FALSE}
+```
